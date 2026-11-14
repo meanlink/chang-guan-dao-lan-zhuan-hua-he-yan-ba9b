@@ -4,7 +4,8 @@
 
 ## 模块与业务流程
 数据接入（JSON/CSV、字段验证、批次指纹）→ 参数化分析（异步 Python worker）→ 结果复核（指标、图形、明细、解释、批准）→ 定时分发（本地收件箱、CSV/JSON、SHA256）；另有业务总览和审计轨迹。
-三个贯穿全栈的实体：Dataset 数据批次、Job 分析任务、Report 分发计划；辅助 User、Audit、Delivery。
+三个贯穿全栈的实体：Dataset 数据批次、Job 分析任务、Report 分发计划；辅助 User、Branch、BranchMembership、Audit、Delivery。
+数据批次、分析任务、分发计划与归档全部按馆隔离：每个请求携带当前馆标识，服务端实时复核账号在该馆的资格，越权访问与跨馆引用一律拒绝。
 
 ## 快速启动
 ```bash
@@ -15,12 +16,17 @@ docker compose exec -T backend python -m scripts.seed_demo
 访问 http://localhost:18204；后端文档 http://localhost:19204/docs；数据库宿主端口 17704。
 `SEED_DEMO=true` 自动幂等 seed；不覆盖用户修改。手动 seed 命令可重复执行。
 
-## 演示账号与权限
-|账号|密码|真实权限|
-|---|---|---|
-|admin@demo.local|Demo123!|接入、执行、批准、分发、暂停、读取与下载|
-|analyst@demo.local|Demo123!|接入、执行、读取与下载；不能批准或安排分发|
-|viewer@demo.local|Demo123!|只读与下载|
+## 演示账号与馆内职责
+职责随馆授予，同一账号在不同馆可以不同；登录后侧栏切馆，页面随时显示当前馆与职责。
+|账号|密码|拾光科学馆（原馆）|星河探索馆|
+|---|---|---|---|
+|admin@demo.local|Demo123!|负责人 owner|负责人 owner|
+|analyst@demo.local|Demo123!|分析 analyst（接入、执行、读取下载）|只读 viewer|
+|viewer@demo.local|Demo123!|只读 viewer（读取与下载）|无资格（不可进入）|
+- owner 馆内负责人：批准、分发、暂停及全部读写；analyst：接入数据与发起分析，不能批准或安排分发；viewer：只读与下载。
+- 令牌只证明身份，馆内职责每次请求按 branch_memberships 实时判定；撤销某馆资格后，旧登录凭据立即失去该馆访问权。
+- 排队分析与定时分发在发起/创建时固化归属馆，不随账号切馆改变；worker 按实体自身的 branch_id 执行。
+- 批次名唯一性按馆判定，同名批次可在不同馆独立建立；尚未归馆（branch_id 为空）的内容对所有列表隐藏。
 
 ## 技术与本地开发
 Python 3.12 / FastAPI / SQLAlchemy / NumPy / SciPy / scikit-learn；PostgreSQL 16；Redis 7；Nginx；原生 HTML CSS JavaScript ES modules（用户指定）。后端所有校验、持久化和算法在服务端。无前端打包步骤。
@@ -29,7 +35,10 @@ Python 3.12 / FastAPI / SQLAlchemy / NumPy / SciPy / scikit-learn；PostgreSQL 1
 ## 目录与工程约定
 backend/src/{models,schemas,services,routes,controllers,middlewares,constants,config,utils}；backend/scripts/seed_demo.py；backend/migrations/initial.py。
 frontend/src/{api,stores,types,components/common,hooks,pages,router,utils,constants}。
-Role 枚举：admin/analyst/viewer；JobStatus：queued/running/completed/failed。后端 backend/src/constants/enums.py，前端 frontend/src/constants/enums.js；路由权限在 middlewares/auth.py；页面按相同角色控制操作入口。
+BranchRole 枚举：owner/analyst/viewer（馆内职责，非全局角色）；JobStatus：queued/running/completed/failed。后端 backend/src/constants/enums.py，前端 frontend/src/constants/enums.js。请求用 X-Branch-Id 声明当前馆，路由在 middlewares/auth.py 按馆实时授权；页面按相同馆内职责控制操作入口。
+
+## 多馆迁移（可中断重跑）
+`migrations/initial.py` 幂等执行：补建 branches/branch_memberships 与各表 branch_id，旧数据统一归入“拾光科学馆（原馆）”，分析、简报与归档一并归馆，旧全局角色 admin/analyst/viewer 映射为原馆 owner/analyst/viewer。回填按 branch_id IS NULL 逐表进行，迁移半途停机后再次启动只补齐缺口，原有关联与唯一归属保持完整。PostgreSQL 用 DROP CONSTRAINT 解除批次名全局唯一，SQLite 用表重建处理。
 
 ## 环境变量与 Docker
 COMPOSE_PROJECT_NAME=guide-chi；FRONTEND_PORT=18204；BACKEND_PORT=19204；DB_PORT=17704；DB_PASSWORD、JWT_SECRET 见 .env.example；SEED_DEMO 默认 true。共享命名产物卷供后端下载与 worker 写入，数据库/Redis 各持久卷。

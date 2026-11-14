@@ -1,7 +1,7 @@
-import {api} from './api/client.js';
+import {api,refreshMemberships} from './api/client.js';
 import {session} from './stores/session.js';
 import {workspace} from './stores/workspace.js';
-import {shell} from './components/common/shell.js';
+import {shell,bindShell} from './components/common/shell.js';
 import {route} from './router/index.js';
 import {login} from './pages/login.js';
 import {overview} from './pages/overview.js';
@@ -16,9 +16,13 @@ async function render(){
    if(!workspace.meta){workspace.meta=await api('/meta');document.title=workspace.meta.name;document.documentElement.style.setProperty('--accent',workspace.meta.accent||'oklch(48% 0.13 145)');document.body.dataset.style=workspace.meta.style||'ledger';}
    const {page,id}=route();
    if(!session.token||page==='login'){login();return;}
+   // 登录后若本地没有有效当前馆（例如资格刚被撤销），刷新馆清单再决定
+   if(!session.currentBranch()){await refreshMemberships();}
+   if(!session.currentBranch()){session.clear();location.hash='#/login';return;}
    const pages={overview,datasets:dataPage,workbench,results:()=>results(id),reports:reportPage};
    const content=await (pages[page]||overview)();app.innerHTML=shell(page,content);
    document.querySelector('#logout').onclick=()=>{session.clear();location.hash='#/login';render();};
+   bindShell(render);
    if(page==='datasets')bindData(render);if(page==='workbench')bindWorkbench();if(page==='results')bindResults(render);if(page==='reports')bindReports(render);
  }catch(e){app.innerHTML='<div class="fatal"><h1>暂时无法打开工作室</h1><p>'+esc(e.message)+'</p><button onclick="location.reload()">重新连接</button></div>';}
 }
